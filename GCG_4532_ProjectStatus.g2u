@@ -1,0 +1,185 @@
+Program.Sub.ScreenSU.Start
+Gui.Form..Create
+Gui.Form..Caption("Project Selection")
+Gui.Form..Size(5340,1965)
+Gui.Form..MinX(0)
+Gui.Form..MinY(0)
+Gui.Form..Position(0,0)
+Gui.Form..BackColor(-2147483633)
+Gui.Form..MousePointer(0)
+Gui.Form..Event(UnLoad,Form_UnLoad)
+Gui.Form.lbl1.Create(Label,"Beginning Date",False,1935,255,0,105,210,True,0,"Arial",8,-2147483633,0)
+Gui.Form.cmdOK.Create(Button)
+Gui.Form.cmdOK.Size(855,375)
+Gui.Form.cmdOK.Position(135,915)
+Gui.Form.cmdOK.Caption("OK")
+Gui.Form.cmdOK.Event(Click,process)
+Gui.Form.txtProj.Create(TextBox,"",True,1170,300,0,150,465,True,0,"Arial",8,-2147483643,1)
+Gui.Form.txtProj.MaxLength(7)
+Gui.Form.lbl3.Create(Label,"Project Number",True,1935,255,0,135,180,True,0,"Arial",8,-2147483633,0)
+Program.Sub.ScreenSU.End
+
+Program.Sub.Preflight.Start
+v.Global..BulkDeclareString(sBegDate, sEndDate)
+v.Global..BulkDeclareLong(iBIRunID, iRptID, iBILOgID)
+Program.Sub.Preflight.End
+
+Program.Sub.Main.Start
+F.Intrinsic.Control.SetErrorHandler("Main_Err")
+F.Intrinsic.Control.ClearErrors
+
+v.Local..BulkDeclareString(sError, sGssPart)
+
+F.ODBC.Connection!con.OpenConnection(V.Ambient.PDSN,V.Ambient.PUser,V.Ambient.PPass)
+gui.Form..Show
+gui.Form.txtProj.SetFocus
+
+F.Intrinsic.Control.ExitSub
+
+F.Intrinsic.Control.Label("Main_Err")
+F.Intrinsic.Control.If(V.Ambient.ErrorNumber,<>,0)
+	Function.Intrinsic.String.Concat("Project: GCG_4532_ProjectStatus.g2u",V.Ambient.Newline,V.Ambient.Newline,"Subroutine: ",V.Ambient.CurrentSubroutine,V.Ambient.NewLine,"Error Occurred ",V.Ambient.ErrorNumber," with description ",V.Ambient.ErrorDescription,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+Function.Intrinsic.Control.EndIf
+
+
+Program.Sub.Main.End
+
+Program.Sub.Form_UnLoad.Start
+F.Intrinsic.Control.SetErrorHandler("Form_UnLoad_Err")
+F.Intrinsic.Control.ClearErrors
+
+V.Local.sError.Declare(String)
+f.ODBC.Connection!con.Close
+f.Intrinsic.Control.End
+
+F.Intrinsic.Control.ExitSub
+
+F.Intrinsic.Control.Label("Form_UnLoad_Err")
+F.Intrinsic.Control.If(V.Ambient.ErrorNumber,<>,0)
+	Function.Intrinsic.String.Concat("Project: GCG_4532_ProjectStatus.g2u",V.Ambient.Newline,V.Ambient.Newline,"Subroutine: ",V.Ambient.CurrentSubroutine,V.Ambient.NewLine,"Error Occurred ",V.Ambient.ErrorNumber," with description ",V.Ambient.ErrorDescription,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+Function.Intrinsic.Control.EndIf
+
+
+Program.Sub.Form_UnLoad.End
+
+Program.Sub.Process.Start
+F.Intrinsic.Control.SetErrorHandler("Process_Err")
+F.Intrinsic.Control.ClearErrors
+v.Local..BulkDeclareString(sError, sParam, sVal, sSQL, sRet, sMatBudget, sMatReveivedToIssue, sMatActual, sName_Customer, sProjectDesc, sOpenPO, sToBeCommitted, sProjectedActual, sDifference,sActLaborSum,sMap)
+v.Local..BulkDeclareFloat(fProjectedActual, fDifference)
+
+'We let GAB script handle the Total numbers so Crystal Report will run faster.
+
+'Name_Customer, Project Description
+f.Intrinsic.String.Build("Select c.Name_Customer, p.Descr from V_Project_Master p left join V_Customer_Master c on p.Customer = c.Customer where Project = '{0}' and Rec = '1'",v.Screen.Form!txtProj.Text,v.Local.sSQL)
+f.ODBC.Connection!con.ExecuteAndReturn(v.Local.sSQL,v.Local.sRet)
+f.Intrinsic.String.Split(v.Local.sRet,"*!*",v.Local.sRet)
+V.Local.sName_Customer.Set(v.Local.sRet(0))
+v.Local.sProjectDesc.Set(v.Local.sRet(1))
+
+'Calculate Budget for Material
+f.Intrinsic.String.Build("Select sum(Cur_Matl) as MatBudget from v_Project_Curr_Budg where project = '{0}'",v.Screen.Form!txtProj.Text,v.Local.sSQL)
+f.ODBC.Connection!con.ExecuteAndReturn(v.Local.sSQL,v.Local.sMatBudget)
+
+'Calculate current Dollars_Actual amount
+f.Intrinsic.String.Build("Select sum(o.Dollars_Actual) as MatActual from v_Job_Header h left join v_Job_Operations o on h.Job = o.Job and h.Suffix = o.Suffix where Project = '{0}' and LMO = 'M'",v.Screen.Form!txtProj.Text,v.Local.sSQL)
+f.ODBC.Connection!con.ExecuteAndReturn(v.Local.sSQL,v.Local.sMatActual)
+
+'Calculate Material amount received but not yet issued. Massa Product, Inc. put received materials from Purchase Orders to Lot with Lot number = Project number
+f.Intrinsic.String.Build("Select sum(Quantity * Unit_Cost) as MatReceivedToIssue from v_Item_Master where Lot = '{0}'",v.Screen.Form!txtProj.Text,v.Local.sSQL)
+f.ODBC.Connection!con.ExecuteAndReturn(v.Local.sSQL,V.Local.sMatReveivedToIssue)
+
+'Calculate amount due on exiting Purchase Order (amount left to be received)
+f.Intrinsic.String.Build("Select sum((p.Qty_Order - p.Qty_Received)* p.Cost) as AmountLeftToReceived from v_Job_Header h join v_Job_Operations_WC o on h.Job = o.Job and h.Suffix = o.Suffix join v_PO_Lines p on o.Job = p.Job and o.Suffix = p.Suffix and o.Seq = p.Sequence where h.Project = '{0}' and o.LMO = 'M' AND p.Qty_Order > 0.00 and (p.qty_Order - p.qty_Received) > 0.00",v.Screen.Form!txtProj.Text,v.Local.sSQL)
+f.ODBC.Connection!con.ExecuteAndReturn(v.Local.sSQL,v.Local.sOpenPO)
+
+'To be committed
+f.Intrinsic.String.Build("Select sum(o.Burden * o.Hours_Estimated) as ToBeCommitted  from v_Job_Header h join v_Job_Operations o on h.Job = o.Job and h.Suffix = o.Suffix left join v_Po_Receiver r on o.Job = r.Job and o.Suffix = r.Suffix and o.Seq = r.Sequence where h.Project = '{0}' and o.Seq < '990000' and o.LMO = 'M' and o.Units_Committed = 0.00 and r.Purchase_Order is null",v.Screen.Form!txtProj.Text,v.Local.sSQL)
+f.ODBC.Connection!con.ExecuteAndReturn(v.Local.sSQL,v.Local.sToBeCommitted)
+
+'Calculate ProjectedActual = total of (MatActual,MatReceivedToIssue,OpenPO,ToBeCommitted)
+f.Intrinsic.Math.Add(v.Local.sMatActual,v.Local.sMatReveivedToIssue,v.Local.fProjectedActual)
+f.Intrinsic.Math.Add(v.Local.sOpenPO,v.Local.fProjectedActual,v.Local.fProjectedActual)
+f.Intrinsic.Math.Add(v.Local.sToBeCommitted,v.Local.fProjectedActual,v.Local.fProjectedActual)
+
+'Calculate Difference of Budget and ProjectedActual
+f.Intrinsic.Math.Sub(v.Local.fProjectedActual,v.Local.sMatBudget,v.Local.fDifference)
+f.Intrinsic.String.Format(v.Local.fProjectedActual,"0,000.00",v.Local.sProjectedActual)
+f.Intrinsic.String.Format(v.Local.fDifference,"0,000.00",v.Local.sDifference)
+
+'Pull Labor summary
+'Because using one shot SQL will burn memory, we break down it into chunks and use Custom tables to store and join table.
+
+'Populate GCG_4532_Job_Ops
+f.Intrinsic.String.Build("Select o.Job,o.Suffix,o.Seq,o.Dollars_Actual,o.Proj_Group,o.LMO,o.Part,o.Description,o.Flag_Closed from V_Job_Header h join V_Job_Operations o on o.job = h.job and o.suffix = h.suffix where h.Project = '{0}' and o.LMO = 'L'",v.Screen.Form!txtProj.Text,v.Local.sSQL)
+f.Data.DataTable.CreateFromSQL("Job_Ops","con",v.Local.sSQL,true)
+v.Local.sMap.Set("Job@!@Job*!*Suffix@!@Suffix*!*Seq@!@Seq*!*Dollars_Actual@!@Dollars_Actual*!*Proj_Group@!@Proj_Group*!*LMO@!@LMO*!*Part@!@Part*!*Description@!@Description*!*Flag_Closed@!@Flag_Closed")
+f.ODBC.Connection!con.Execute("Delete from GCG_4532_Job_Ops")
+f.Data.DataTable.SaveToDB("Job_Ops","con","GCG_4532_Job_Ops","",128,v.Local.sMap)
+
+'Populate GCG_4532_Job_Detail
+f.Intrinsic.String.Build("Select d.Job,d.Suffix,d.Seq,d.Hours_Worked,d.Amount_Labor,d.Amt_Overhead from v_job_header h join V_Job_Detail d on h.job = d.job and h.suffix =  d.suffix where h.Project = '{0}'",v.Screen.Form!txtProj.Text,v.Local.sSQL)
+f.Data.DataTable.CreateFromSQL("Job_Detail","con",v.Local.sSQL,true)
+v.Local.sMap.Set("Job@!@Job*!*Suffix@!@Suffix*!*Seq@!@Seq*!*Hours_Worked@!@Hours_Worked*!*Amount_Labor@!@Amount_Labor*!*Amt_Overhead@!@Amt_Overhead")
+f.ODBC.Connection!con.Execute("Delete from GCG_4532_Job_Detail")
+f.Data.DataTable.SaveToDB("Job_Detail","con","GCG_4532_Job_Detail","",128,v.Local.sMap)
+
+'Calculate Sum of each Seq of Job_Detail in GCG_4532_Job_Detail
+f.Data.DataTable.CreateFromSQL("Job_Detail_Sum","con","SELECT Job,Suffix,Seq,SUM(HOURS_WORKED) as HOURS_WORKED,SUM(Amount_Labor) as Amount_Labor,SUM(Amt_Overhead) as Amt_Overhead FROM GCG_4532_Job_Detail GROUP BY Job,Suffix,Seq",true)
+f.ODBC.Connection!con.Execute("Delete from GCG_4532_Job_Detail")
+f.Data.DataTable.SaveToDB("Job_Detail","con","GCG_4532_Job_Detail","",128,v.Local.sMap)
+
+'Populate GCG_4532_Labor_Act
+f.Data.DataTable.CreateFromSQL("Labor_Act","con","Select Proj_Group,Sum(Dollars_Actual) as Dollars_Actual,SUM(HOURS_WORKED) as ActHours,SUM(Amount_Labor) as ActLabor,SUM(Amt_Overhead) as ActOverhead from GCG_4532_Job_Ops o join GCG_4532_Job_Detail d on o.Job = d.Job and o.Suffix = d.Suffix and o.Seq = d.Seq Group by Proj_Group",true)
+f.ODBC.Connection!con.Execute("Delete from GCG_4532_Labor_Act")
+v.Local.sMap.Set("Proj_Group@!@Proj_Group*!*Dollars_Actual@!@Dollars_Actual*!*ActHours@!@ActHours*!*ActLabor@!@ActLabor*!*ActOverhead@!@ActOverhead")
+f.Data.DataTable.SaveToDB("Labor_Act","con","GCG_4532_Labor_Act","",128,v.Local.sMap)
+
+'Populate GCG_4532_Labor_Budg
+f.Intrinsic.String.Build("Select Project,F_Group,Sum(Cur_Hours) as Budg_Hours,sum(Cur_Labr) as Budg_Labor from V_Project_Curr_Budg where Project = '{0}' Group by Project,F_Group",v.Screen.Form!txtProj.Text,v.Local.sSQL)
+f.Data.DataTable.CreateFromSQL("Labor_Budg","con",v.Local.sSQL,true)
+f.ODBC.Connection!con.Execute("Delete from GCG_4532_Labor_Budg")
+v.Local.sMap.Set("Project@!@Project*!*F_Group@!@F_Group*!*Budg_Hours@!@Budg_Hours*!*Budg_Labor@!@Budg_Labor")
+f.Data.DataTable.SaveToDB("Labor_Budg","con","GCG_4532_Labor_Budg","",128,v.Local.sMap)
+f.ODBC.Connection!con.Execute("Update GCG_4532_Labor_Budg b set b.Descr = (Select g.Descr from V_Project_Group g where b.F_Group = g.F_Group)")
+
+'Populate GCG_4532_Labor_Sum
+f.Data.DataTable.CreateFromSQL("Labor_Sum","con","select b.Project, b.F_Group, b.Descr, IsNull(b.Budg_Hours,0) as Budg_Hours, IsNull(b.Budg_Labor,0) as Budg_Labor, a.Proj_Group, Isnull(a.ActHours,0) as ActHours,Isnull(a.ActLabor,0) as ActLabor,IsNull(a.ActOverhead,0) as ActOverhead from GCG_4532_Labor_Budg b full outer join GCG_4532_Labor_Act a on a.Proj_Group = b.F_Group",true)
+f.ODBC.Connection!con.Execute("Delete from GCG_4532_Labor_Sum")
+v.Local.sMap.Set("Project@!@Project*!*F_Group@!@Group_Code*!*Descr@!@Description*!*Budg_Hours@!@Budg_Hours*!*Budg_Labor@!@Budg_Labor*!*Proj_Group@!@Proj_Group*!*ActHours@!@ActHours*!*ActLabor@!@ActLabor*!*ActOverhead@!@ActOverhead")
+f.Data.DataTable.SaveToDB("Labor_Sum","con","GCG_4532_Labor_Sum","",128,v.Local.sMap)
+f.ODBC.Connection!con.Execute("Update GCG_4532_Labor_Sum set TotalLabor = ActLabor + ActOverHead")
+
+f.ODBC.Connection!con.Execute("Delete from GCG_4532_Labor_Sum where Group_Code = 'SALES' or Group_Code = '99'")
+'Log Report
+F.Global.BI.GetRunID(V.Global.iBIRunID)
+f.Global.BI.GetIDFromName("GCG_4532_Project_Status.rpt",True,v.Global.iRptID)
+F.Global.BI.StartLogging(V.Global.iBIRunID,v.Global.iRptID,-1,"",V.Global.iBILogID)
+
+'Stop Logging
+F.Global.BI.StopLogging(V.Global.iBILogID)
+f.Intrinsic.String.Build("{0}*!*{1}*!*{2}*!*{3}*!*{4}*!*{5}*!*{6}*!*{7}*!*{8}*!*{9}",v.Screen.Form!txtProj.Text,v.Local.sProjectDesc,v.Local.sName_Customer,v.Local.sMatBudget,v.Local.sMatActual,v.Local.sMatReveivedToIssue,v.Local.sOpenPO,v.Local.sToBeCommitted,v.Local.sProjectedActual,v.Local.sDifference,v.Local.sVal)
+V.Local.sParam.Set("ProjectNum*!*ProjectDesc*!*Name_Customer*!*MatBudget*!*MatActual*!*MatReceivedToIssue*!*OpenPO*!*ToBeCommitted*!*ProjectedActual*!*Difference")
+
+gui.Form..Visible(False)	
+''Print the Report
+F.Global.BI.RunReportPreProcessor(V.Global.iBIRunID,V.Global.iBILogID,V.Local.sParam,V.Local.sVal,"",-1,True,"",-1,"",-1,"","",V.Global.iBIRunID)
+Function.ODBC.Connection!con.Close
+f.Intrinsic.Control.End
+
+F.Intrinsic.Control.ExitSub
+
+F.Intrinsic.Control.Label("Process_Err")
+F.Intrinsic.Control.If(V.Ambient.ErrorNumber,<>,0)
+	Function.Intrinsic.String.Concat("Project: GCG_4532_ProjectStatus.g2u",V.Ambient.Newline,V.Ambient.Newline,"Subroutine: ",V.Ambient.CurrentSubroutine,V.Ambient.NewLine,"Error Occurred ",V.Ambient.ErrorNumber," with description ",V.Ambient.ErrorDescription,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+Function.Intrinsic.Control.EndIf
+
+Program.Sub.Process.End
+
+Program.Sub.Comments.Start
+${$0$}$$}$$}$5/26/2017 7:58:32 AM$}$False
+${$3$}$0$}$$}$0$}$-1$}$$}$12:00:00 AM$}$This will be a custom GAB script that will run from a custom Menu Item under Bill of Material -> File -> Custom Cobalt BOM Import.  The user will navigate to the xml file that needs to be loaded into Global Shop.  Once the xml is parsed there will be a search in Global Shop to see if a BOM already exists for that Part Number.  If one already exists a compare screen will display showing the differences between the two.  If one does not exist then the screen will display the BOM as it will be uploaded into Global Shop.  Any parts that are listed in the BOM that are not Inventory Parts will be highlighted in Yellow.  If there are any parts not in inventory the user will have the option to click the create Parts button to generate those parts in Global Shop.  If the BOM exists in Global shop then any differences on the new import will be highlighted in Red.  After the Parts have been created then the Upload button will upload and override any previous BOM for that part.}$12:00:00 AM
+Program.Sub.Comments.End
